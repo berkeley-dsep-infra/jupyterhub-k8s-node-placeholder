@@ -84,34 +84,35 @@ def main():
             placeholder_template = yaml.load(f)
 
         calendar = get_calendar(config["calendarUrl"])
-        events = get_events(calendar)
-        logging.info(f"Found {len(events)} events at {config['calendarUrl']}.")
+        if calendar:
+            events = get_events(calendar)
+            logging.info(f"Found {len(events)} events at {config['calendarUrl']}.")
 
-        replica_count_overrides = get_replica_counts(events)
-        logging.info(f"Overrides: {replica_count_overrides}")
+            replica_count_overrides = get_replica_counts(events)
+            logging.info(f"Overrides: {replica_count_overrides}")
 
-        # Generate deployment config based on our config
-        for pool_name, pool_config in config["nodePools"].items():
-            replica_count = replica_count_overrides.get(
-                pool_name, pool_config["replicas"]
-            )
-            deployment = make_deployment(
-                pool_name,
-                placeholder_template,
-                pool_config["nodeSelector"],
-                pool_config["resources"],
-                replica_count,
-            )
-            logging.info(f"Setting {pool_name} to have {replica_count} replicas")
-            with tempfile.NamedTemporaryFile(mode="r+") as f:
-                yaml.dump(deployment, f)
-                f.flush()
-                proc = subprocess.run(
-                    ["kubectl", "apply", "-f", f.name],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
+            # Generate deployment config based on our config
+            for pool_name, pool_config in config["nodePools"].items():
+                replica_count = replica_count_overrides.get(
+                    pool_name, pool_config["replicas"]
                 )
+                deployment = make_deployment(
+                    pool_name,
+                    placeholder_template,
+                    pool_config["nodeSelector"],
+                    pool_config["resources"],
+                    replica_count,
+                )
+                logging.info(f"Setting {pool_name} to have {replica_count} replicas")
+                with tempfile.NamedTemporaryFile(mode="r+") as f:
+                    yaml.dump(deployment, f)
+                    f.flush()
+                    proc = subprocess.run(
+                        ["kubectl", "apply", "-f", f.name],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
 
-                logging.info(proc.stdout.strip())
+                    logging.info(proc.stdout.strip())
         time.sleep(60)
