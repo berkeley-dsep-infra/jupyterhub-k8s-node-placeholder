@@ -1,7 +1,8 @@
 certifi==2024.07.04
 DateTime
 ical==5.0.0
-kubernetes==32.0.1
+kubernetes==35.0.0
 niquests==3.7.2
+pyasn1==0.6.2
 ruamel.yaml
 urllib3==2.6.3
