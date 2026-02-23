@@ -11,6 +11,7 @@ on:
       - 'LICENSE'
       - '.github/**'
       - '.gitignore'
+      - 'tests/**'
     tags:
       - "**"
 
