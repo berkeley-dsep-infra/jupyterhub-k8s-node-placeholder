@@ -1,0 +1,29 @@
+name: "Run python unit tests"
+on:
+- pull_request_target
+
+permissions:
+  contents: read # access to check out code and install dependencies
+
+jobs:
+  test-scaler:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r node-placeholder-scaler/requirements.txt
+
+    - name: Install pytest
+      run: pip install pytest==8.4.2
+
+    - name: Run unit tests
+      run: python node-placeholder-scaler/tests/run_tests.py

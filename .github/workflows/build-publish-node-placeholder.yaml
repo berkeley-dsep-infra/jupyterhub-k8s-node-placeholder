@@ -6,13 +6,15 @@ on:
     branches:
       - main
     paths-ignore:
+      - 'dev-requirements.txt'
       - 'README.md'
       - 'CONTRIBUTING.md'
       - 'LICENSE'
       - '.github/**'
       - '.gitignore'
+      - '**/tests/**'
     tags:
-      - "**"
+      - '**'
 
 permissions:
   contents: 'read'
