@@ -114,7 +114,7 @@ After you've calculated the appropriate memory request for each placeholder node
 helm upgrade --install --namespace node-placeholder-scaler --create-namespace node-placeholder-scaler oci://>TBD>/node-placeholder-scaler --values values.yaml
 ```
 
-### Determining CPU and RAM scaling thresholds
+## Determining CPU and RAM scaling thresholds
 
 When running, no new placeholder nodes will be deployed if existing nodes have more than the default or user-defined threshold of CPU or RAM.
 
@@ -124,7 +124,7 @@ One should also have an idea of how long it takes for a new node to spin up.  Th
 
 the ultimate goal is to find a threshold that hits the sweet spot between minimizing extra placeholder nodes (and thereby keep additional node costs to a minimum), and spinning up a node in enough time such that user logins don't take more than a couple of minutes at most.
 
-#### Tens to hundreds of users with one or more hubs, single node pool
+### Tens to hundreds of users with one or more hubs, single node pool
 
 This will probably be the most common use case.
 
@@ -132,7 +132,7 @@ For a k8s architecture that has all user pods constrained to a single node pool,
 
 For example, the [Cal-ICOR](https://github.com/cal-icor/cal-icor-hubs) deployment has roughly 300-400 unique users per day and uses a `mem` scaling strategy set to spin up a placeholder node at 40% memory commitment.  This allows us to spin a node up early to catch burst login events, but will also tear it down quickly if the login pressure eases.
 
-#### Hundreds to thousands of users with more than one hub, multiple node pools
+### Hundreds to thousands of users with more than one hub, multiple node pools
 
 For larger deployments like [UC Berkeley's Datahub](https://github.com/dsep-infra/datahub) that support thousands of users per day (~15,000 per semester), most hubs have their own dedicated node pools.  This deployment typically has many users logged in around the clock, with more than one node per pool already serving users and providing extra headroom for surge logins.  They run the default `balanced` strategy and are happy with a 20% threshold.
 
