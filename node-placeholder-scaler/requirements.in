@@ -3,6 +3,6 @@ DateTime
 ical==5.0.0
 kubernetes==35.0.0
 niquests==3.7.2
-pyasn1==0.6.2
+pyasn1==0.6.3
 ruamel.yaml
 urllib3==2.6.3
