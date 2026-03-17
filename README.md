@@ -5,9 +5,9 @@ This repository contains a Helm chart for deploying a JupyterHub Node Placeholde
 The Node Placeholder service works by monitoring the academic calendar events from a provided iCal URL. Based on the events, it dynamically adjusts the number of placeholder nodes available in the Kubernetes cluster, allowing JupyterHub to pre-allocate resources for anticipated user logins. If there are existing user nodes deployed, and these have the capacity to handle additional users, the Node Placeholder service will scale down the number of placeholder nodes accordingly.
 
 > [!NOTE]
-> Be sure that the time zone of your public calendar matches the time zone set in the Helm chart values (`calendarTimezone`)!  Kubernetes itself runs in UTC time, but the Node Placeholder service needs to interpret the calendar events in the correct time zone to function properly.
+> Be sure that the time zone of your public calendar matches the time zone set in the Helm chart values (`calendarTimezone`)!  Kubernetes itself runs by default in UTC time, but the Node Placeholder service needs to interpret the calendar events in the correct time zone to function properly.
 
-If any existing nodes are underutilized, the Node Placeholder service will also scale down the number of placeholder nodes to free up resources. Currently, it will not scale up a new placeholder node if any existing user nodes have > 20% of both CPU and RAM available. This is customizable in the the helm chart values (`values.yaml`).
+If any existing nodes are underutilized, the Node Placeholder service will also scale down the number of placeholder nodes to free up resources. By default, it will not scale up a new placeholder node if any existing user nodes have > 20% of both CPU and RAM available. This is customizable in the the helm chart values (`values.yaml`).
 
 The events are fetched from the iCal URL and parsed to determine peak usage times, such as the start of exam periods or other significant academic events where you expect a large number of users to log in. The service then scales the number of placeholder nodes accordingly, ensuring that users have a seamless experience when logging into JupyterHub during these high-demand periods.
 
@@ -43,6 +43,7 @@ calendarUrl: https://url.to/your/public/calendar.ics
 calendarTimezone: "America/Los_Angeles"
 
 scalingStrategy: mem  # Options: cpu, mem, balanced (default)
+memoryThreshold: 35  # Spin up a new node quickly as all users spawn in to a single node pool
 
 nodePools:
   # The short name of the node pool, used in the calendar event description.
@@ -113,13 +114,33 @@ After you've calculated the appropriate memory request for each placeholder node
 helm upgrade --install --namespace node-placeholder-scaler --create-namespace node-placeholder-scaler oci://>TBD>/node-placeholder-scaler --values values.yaml
 ```
 
-## Features
+## Determining CPU and RAM scaling thresholds
 
-TODO
+When running, no new placeholder nodes will be deployed if existing nodes have more than the default or user-defined threshold of CPU or RAM.
+
+There are several factors in play for how you determine your scaling thresholds, consisting of your Jupyterhub deployment architecture, user resource usage (lots of RAM and a small amount of CPU), number of users per node, and potential user login "surges" (aka tens or hundreds of users logging in simultaneously, eg: for a class or seminar).
+
+One should also have an idea of how long it takes for a new node to spin up.  This not only include the launching of the k8s system pods, but image pulling as well.  This can take about ~10 minutes for a GKE node and reasonably sized (~3G compressed) image.
+
+the ultimate goal is to find a threshold that hits the sweet spot between minimizing extra placeholder nodes (and thereby keep additional node costs to a minimum), and spinning up a node in enough time such that user logins don't take more than a couple of minutes at most.
+
+### Tens to hundreds of users with one or more hubs, single node pool
+
+This will probably be the most common use case.
+
+For a k8s architecture that has all user pods constrained to a single node pool, particularly with multiple Jupyterhubs deployed, and with a limit of roughly 70-80 users before a new node is spun up, it's probably best to start with the default memory or cpu threshold of 20%, and watch the placeholder-scaler pod logs during scaling events to see if you're starting placeholder nodes up early enough to keep login times down.
+
+For example, the [Cal-ICOR](https://github.com/cal-icor/cal-icor-hubs) deployment has roughly 300-400 unique users per day and uses a `mem` scaling strategy set to spin up a placeholder node at 40% memory commitment.  This allows us to spin a node up early to catch burst login events, but will also tear it down quickly if the login pressure eases.
+
+### Hundreds to thousands of users with more than one hub, multiple node pools
+
+For larger deployments like [UC Berkeley's Datahub](https://github.com/dsep-infra/datahub) that support thousands of users per day (~15,000 per semester), most hubs have their own dedicated node pools.  This deployment typically has many users logged in around the clock, with more than one node per pool already serving users and providing extra headroom for surge logins.  They run the default `balanced` strategy and are happy with a 20% threshold.
+
+Ultimately you will need to check the logs, and cross-reference when new nodes are spun up against the time it takes for a user to log in successfully.
 
 ## Working with this repository
 
-You will need Python 3.8+ and `pip` installed on your system. You can manage Python
+You will need Python 3.11+ and `pip` installed on your system. You can manage Python
 environments using tools like `venv` or `conda`.
 
 For basic development, you will need to install the dependencies listed in
@@ -172,12 +193,16 @@ Create a PR with your changes, and these will be added to the latest image creat
 
 #### Testing your changes
 
-Right now, there are no automated tests for this repo. You can test your changes
-to the Python code by running [test.py](node-placeholder-scaler/test.py):
+The unit tests are located in `node-placeholder-scaler/tests`, and contain a
+comprehensive suite of checks against both `scaler.py` and
+`calendar_parser.py`.
+
+These are run automatically [via this workflow](.github/workflows/test-scaler.yaml)
+when a pull request is opened.
+
+To manually run the Python unit tests, you need to install both `dev-requirements.txt` and
+`node-placeholder-scaler/requirements.txt`.  After this, you can run:
 
 ``` bash
-python node-placeholder-scaler/test.py
+python node-placeholder-scaler/tests/run_tests.py
 ```
-
-This will test the scaler's ability to read and parse calendar events from a known
-iCal URL.
