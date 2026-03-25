@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import re
-import subprocess
 import sys
+
+from kubernetes import client, config
 
 # leave this much memory available so that the node doesn't become completely
 # unschedulable, which can cause issues with cluster autoscaling and other
@@ -32,14 +33,6 @@ def k8s_mem_to_bytes(mem: str) -> int:
     return int(mem)
 
 
-def kubectl(*args: str) -> str:
-    """Run a kubectl command and return its output as a string."""
-    result = subprocess.run(
-        ["kubectl", *args], capture_output=True, text=True, check=True
-    )
-    return result.stdout
-
-
 def main():
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <node-name>")
@@ -47,34 +40,30 @@ def main():
 
     node = sys.argv[1]
 
+    config.load_kube_config()
+    v1 = client.CoreV1Api()
+
     # determine node allocatable memory in bytes
-    node_mem = kubectl(
-        "get", "node", node, "-o", "jsonpath={.status.allocatable.memory}"
-    ).strip()
+    node_obj = v1.read_node(node)
+    node_mem = node_obj.status.allocatable["memory"]
     node_bytes = k8s_mem_to_bytes(node_mem)
     print(f"Node allocatable memory: {node_bytes} bytes")
 
     # determine total memory requests of all non-placeholder, non-notebook pods on the node
-    jsonpath = r"{range .items[*].spec.containers[*]}{.name}{'\t'}{.resources.requests.memory}{'\n'}{end}"
-    output = kubectl(
-        "get",
-        "-A",
-        "pod",
-        "-l",
-        "component!=user-placeholder",
-        f"--field-selector=spec.nodeName={node}",
-        "-o",
-        f"jsonpath={jsonpath}",
+    pods = v1.list_pod_for_all_namespaces(
+        label_selector="component!=user-placeholder",
+        field_selector=f"spec.nodeName={node}",
     )
 
     placeholder_pod_mem = 0
-    for line in output.splitlines():
-        if re.search(r"pause|notebook", line):
-            continue
-        parts = line.split("\t", 1)
-        if len(parts) < 2 or not parts[1].strip():
-            continue
-        placeholder_pod_mem += k8s_mem_to_bytes(parts[1].strip())
+    for pod in pods.items:
+        for container in pod.spec.containers:
+            if re.search(r"pause|notebook", container.name):
+                continue
+            mem = (container.resources.requests or {}).get("memory")
+            if not mem:
+                continue
+            placeholder_pod_mem += k8s_mem_to_bytes(mem)
 
     print(f"Total non-notebook memory used by pods: {placeholder_pod_mem} bytes")
 
