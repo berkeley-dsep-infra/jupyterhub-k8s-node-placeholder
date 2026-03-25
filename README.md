@@ -81,7 +81,7 @@ To calculate the recommended size of the placeholder pod, you can run the script
 Here is example output:
 
 ``` bash
-$ ./determine_placeholder_pod_memory.py gke-cluster-node-name-fd0b35e6-b6tt
+$ ./determine_placeholder_pod_memory.py <node-name>
 Node allocatable memory: 61483356160 bytes
 Total non-notebook memory used by pods: 466964736 bytes
 
