@@ -54,6 +54,7 @@ placeholderPodLabelSelector: "app=node-placeholder-scaler,component=placeholder"
 cpuThreshold: 0.2
 memoryThreshold: 0.2
 scalingStrategy: balanced # Options: cpu, mem, balanced (default)
+calendarOverrideEnabled: False # Set to true to force the scaler to use calendar replica counts instead of config replica counts when calendar replica counts are greater than 0
 
 # The URL of the public calendar to use for the node placeholder.
 # calendarUrl:

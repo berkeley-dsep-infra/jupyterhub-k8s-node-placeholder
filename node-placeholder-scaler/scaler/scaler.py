@@ -346,6 +346,11 @@ def main():
 
                 calendar_replica_count = replica_count_overrides.get(pool_name, 0)
                 config_replica_count = pool_config["replicas"]
+                calendar_override_enabled = config.get("calendarOverrideEnabled", False)
+                if not isinstance(calendar_override_enabled, bool):
+                    raise ValueError(
+                        f"calendarOverrideEnabled must be a boolean, got {type(calendar_override_enabled).__name__}: {calendar_override_enabled!r}"
+                    )
                 modified_replica = (
                     replica_count_overrides.get(pool_name, pool_config["replicas"])
                     - node_placeholder_deployment_reduction
@@ -353,13 +358,20 @@ def main():
                 logging.info(
                     f"Calendar replica count for pool {pool_name}: {calendar_replica_count}"
                 )
-                logging.info(
-                    f"Config replica count for pool {pool_name}: {config_replica_count}"
-                )
-                logging.info(
-                    f"Reducing {pool_name} placeholder deployment replicas by {node_placeholder_deployment_reduction} based on node resources."
-                )
-                replica_count = max(modified_replica, 0)
+
+                if calendar_replica_count > 0 and calendar_override_enabled:
+                    logging.info(
+                        f"Overriding config replica count for pool {pool_name} with calendar replica count {calendar_replica_count} instead of config replica count: {config_replica_count}."
+                    )
+                    replica_count = calendar_replica_count
+                else:
+                    logging.info(
+                        f"Config replica count for pool {pool_name}: {config_replica_count}"
+                    )
+                    logging.info(
+                        f"Reducing {pool_name} placeholder deployment replicas by {node_placeholder_deployment_reduction} based on node resources."
+                    )
+                    replica_count = max(modified_replica, 0)
                 logging.info(
                     f"Final replica count for pool {pool_name}: {replica_count}"
                 )
