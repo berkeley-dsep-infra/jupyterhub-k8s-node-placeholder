@@ -5,7 +5,7 @@ image:
     us-central1-docker.pkg.dev/cal-icor-hubs/core/node-placeholder-scaler
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "0.0.1-0.dev.git.302.h3ba8a55"
+  tag: "0.0.1-0.dev.git.400.hdbe1c2e"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -54,7 +54,7 @@ placeholderPodLabelSelector: "app=node-placeholder-scaler,component=placeholder"
 cpuThreshold: 0.2
 memoryThreshold: 0.2
 scalingStrategy: balanced # Options: cpu, mem, balanced (default)
-calendarOverrideEnabled: False # Set to true to force the scaler to use calendar replica counts instead of config replica counts when calendar replica counts are greater than 0
+calendarOverrideEnabled: False # Set to True to force the scaler to use calendar replica counts instead of config replica counts when calendar replica counts are greater than 0
 
 # The URL of the public calendar to use for the node placeholder.
 # calendarUrl:

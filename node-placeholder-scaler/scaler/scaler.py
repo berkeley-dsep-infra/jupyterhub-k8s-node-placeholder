@@ -361,7 +361,7 @@ def main():
 
                 if calendar_replica_count > 0 and calendar_override_enabled:
                     logging.info(
-                        f"Overriding config replica count for pool {pool_name} with calendar replica count {calendar_replica_count} instead of config replica count: {config_replica_count}."
+                        f"Overriding config replica count for pool {pool_name} with calendar replica count {calendar_replica_count} instead of modified replica count: {modified_replica}."
                     )
                     replica_count = calendar_replica_count
                 else:
