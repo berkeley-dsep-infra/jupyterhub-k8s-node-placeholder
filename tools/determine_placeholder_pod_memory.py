@@ -11,6 +11,7 @@ UNUSED_MEMORY_BYTES = 277872640
 
 
 def k8s_mem_to_bytes(mem: str) -> int:
+    """Convert Kubernetes memory string (e.g. "512Mi", "2Gi") to bytes."""
     units = {
         "Ei": 1024**6,
         "Pi": 1024**5,
@@ -32,6 +33,7 @@ def k8s_mem_to_bytes(mem: str) -> int:
 
 
 def kubectl(*args: str) -> str:
+    """Run a kubectl command and return its output as a string."""
     result = subprocess.run(
         ["kubectl", *args], capture_output=True, text=True, check=True
     )
