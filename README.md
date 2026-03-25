@@ -72,16 +72,16 @@ thereby triggering another node to be created.
 The node placeholder pod should be 'big' enough that it needs to be kicked out to get even a single
 user pod on the node - but not so big that it can't run on a node where other system pods are running!
 
-To calculate the recommended size of the placeholder pod, you can run the script located in the root of this repo:
+To calculate the recommended size of the placeholder pod, you can run the script located in the `tools` directory of this repo:
 
 ``` bash
-./determine_placeholder_pod_memory.py <USER_NODE>
+./tools/determine_placeholder_pod_memory.py <USER_NODE>
 ```
 
 Here is example output:
 
 ``` bash
-$ ./determine_placeholder_pod_memory.py <USER_NODE>
+$ ./tools/determine_placeholder_pod_memory.py <USER_NODE>
 Node allocatable memory: 61483356160 bytes
 Total non-notebook memory used by pods: 466964736 bytes
 
