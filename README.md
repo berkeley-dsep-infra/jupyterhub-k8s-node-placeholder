@@ -75,13 +75,13 @@ user pod on the node - but not so big that it can't run on a node where other sy
 To calculate the recommended size of the placeholder pod, you can run the script located in the root of this repo:
 
 ``` bash
-./determine_placeholder_pod_memory.sh <USER_NODE>
+./determine_placeholder_pod_memory.py <USER_NODE>
 ```
 
 Here is example output:
 
 ``` bash
-$ ./determine_placeholder_pod_memory.py <node-name>
+$ ./determine_placeholder_pod_memory.py <USER_NODE>
 Node allocatable memory: 61483356160 bytes
 Total non-notebook memory used by pods: 466964736 bytes
 
@@ -93,7 +93,7 @@ Recommended placeholder pod size for values.yaml: 60738518784 bytes
 After you've calculated the appropriate memory request for each placeholder node, and edited your `values.yaml` file, you can install the Helm chart using the following command:
 
 ``` bash
-helm upgrade --install --namespace node-placeholder-scaler --create-namespace node-placeholder-scaler oci://>TBD>/node-placeholder-scaler --values values.yaml
+helm upgrade --install --namespace node-placeholder-scaler --create-namespace node-placeholder-scaler oci://<TBD>/node-placeholder-scaler --values values.yaml
 ```
 
 ## Determining CPU and RAM scaling thresholds
