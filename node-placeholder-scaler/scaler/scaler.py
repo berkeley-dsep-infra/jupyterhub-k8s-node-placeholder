@@ -363,7 +363,7 @@ def main():
                     logging.info(
                         f"Overriding config replica count for pool {pool_name} with calendar replica count {calendar_replica_count} instead of modified replica count: {modified_replica}."
                     )
-                    replica_count = max(calendar_replica_count, config_replica_count, 0)
+                    replica_count = max(calendar_replica_count, 0)
                 else:
                     logging.info(
                         f"Config replica count for pool {pool_name}: {config_replica_count}"
