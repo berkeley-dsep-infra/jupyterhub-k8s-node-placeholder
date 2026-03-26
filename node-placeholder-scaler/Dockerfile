@@ -1,6 +1,6 @@
 FROM python:3.11
 
-ENV KUBECTL_VERSION v1.33.1
+ENV KUBECTL_VERSION=v1.33.1
 ADD https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl /usr/local/bin/kubectl
 RUN chmod +x /usr/local/bin/kubectl
 
