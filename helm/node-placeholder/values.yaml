@@ -5,7 +5,7 @@ image:
     us-central1-docker.pkg.dev/cal-icor-hubs/core/node-placeholder-scaler
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "0.0.1-0.dev.git.302.h3ba8a55"
+  tag: "0.0.1-0.dev.git.400.hdbe1c2e"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -54,6 +54,7 @@ placeholderPodLabelSelector: "app=node-placeholder-scaler,component=placeholder"
 cpuThreshold: 0.2
 memoryThreshold: 0.2
 scalingStrategy: balanced # Options: cpu, mem, balanced (default)
+calendarOverrideEnabled: False # Set to True to force the scaler to use calendar replica counts instead of config replica counts when calendar replica counts are greater than 0
 
 # The URL of the public calendar to use for the node placeholder.
 # calendarUrl:
@@ -65,39 +66,6 @@ scalingStrategy: balanced # Options: cpu, mem, balanced (default)
 # If not set, defaults to UTC
 # calendarTimezone: "America/Los_Angeles"
 
-# Calculate size of node placeholder by:
-# 1. Select a node in the node pool you want to configure
-#    export NODE=<node-name>
-# 2. Get total amount of memory allocatable to pods on this node
-#    kubectl get node $NODE -o jsonpath='{.status.allocatable.memory}'
-# 3. Get total amount of memory used by non-user pods on the node.
-#    kubectl get -A pod -l 'component!=user-placeholder' --field-selector spec.nodeName=$NODE -o jsonpath='{range .items[*].spec.containers[*]}{.name}{"\t"}{.resources.requests.memory}{"\n"}{end}' | egrep -v 'pause|notebook' | sort
-#    This will return memory units you'll need to sum yourself
-#
-# The node placeholder pod should be 'big' enough that it needs to be kicked out to get even a single
-# user pod on the node - but not so big that it can't run on a node where other system pods are running!
-#
-# So we should make the memory be output of (2) - output of (3), with maybe another 256Mi wiggle room
-#
-# Example using a GCP n2-highmem-8 node with 64G of RAM allocatable:
-# $ NODE=<node name>
-# $ kubectl get node ${NODE} -o jsonpath='{.status.allocatable.memory}' # convert to bytes
-# 60055600Ki%
-# $ kubectl get -A pod -l 'component!=user-placeholder' \
-#   --field-selector spec.nodeName=${NODE} \
-#   -o jsonpath='{range .items[*].spec.containers[*]}{.name}{"\t"}{.resources.requests.memory}{"\n"}{end}' | \
-#   egrep -v 'pause|notebook' # convert all values to bytes for easier matching
-# calico-node
-# fluentbit       100Mi
-# fluentbit-gke   100Mi
-# gke-metrics-agent       60Mi
-# ip-masq-agent   16Mi
-# kube-proxy
-# prometheus-node-exporter
-# $ # subtract the sum of the second command's values from the first value, then subtract another 277872640 bytes for wiggle room
-# $ # in this case:  (60055600Ki - (100Mi + 100Mi + 60Mi + 16Mi)) - 256Mi
-# $ # (61496934400 - (104857600 + 104857600 + 16777216 + 62914560)) - 277872640 == 60929654784
-#
 # the following section should live in your deployment's values.yaml file
 # and should be used to configure the node placeholder:
 #
@@ -121,5 +89,7 @@ scalingStrategy: balanced # Options: cpu, mem, balanced (default)
 #         requests:
 #           # Some value slightly lower than allocatable RAM on the nodepool
 #           # This is an example using a GCP n2-highmem-8 node with 64G of RAM allocatable
+#           # calculate this value for your node pools with the determine_placeholder_pod_memory.py
+#           # script located in the tools/ directory of the repo
 #           memory: 60929654784
 #       replicas: 0
