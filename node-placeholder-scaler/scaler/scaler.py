@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import time
 from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from kubernetes import client, config
 from ruamel.yaml import YAML
@@ -14,6 +16,14 @@ from .utils import parse_cpu, parse_memory
 
 yaml = YAML(typ="safe")
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class NodeStatus:
+    """A helper data structure to return basic node information."""
+
+    unschedulable: bool
+    age_seconds: float
 
 
 def _get_v1_client() -> client.CoreV1Api:
@@ -227,16 +237,22 @@ def compute_replica_count(
         return max(modified_replica, 0)
 
 
-def is_unschedulable_node(node_name):
+def get_node_status(node_name: str) -> NodeStatus:
+    """Get a node's schedulability and age."""
     v1 = _get_v1_client()
 
     try:
         node = v1.read_node(name=node_name)
-        return bool(node.spec.unschedulable)
+        age_seconds = (
+            datetime.now(timezone.utc) - node.metadata.creation_timestamp
+        ).total_seconds()
+        return NodeStatus(
+            unschedulable=bool(node.spec.unschedulable), age_seconds=age_seconds
+        )
 
     except client.exceptions.ApiException as e:
         log.error(f"Kubernetes API error: {e}")
-        return False
+        return NodeStatus(unschedulable=False, age_seconds=0.0)
 
 
 def make_deployment(pool_name, template, node_selector, resources, replicas):
@@ -248,17 +264,6 @@ def make_deployment(pool_name, template, node_selector, resources, replicas):
     deployment["spec"]["template"]["spec"]["containers"][0]["resources"] = resources
 
     return deployment
-
-
-def update_node_first_seen(node: str, node_first_seen: dict, now: float) -> float:
-    """Record the first time a node is observed and return its observed age in seconds.
-
-    Uses perf_counter values so the age is relative to scaler uptime, not wall
-    clock time.  Mutates node_first_seen in place.
-    """
-    if node not in node_first_seen:
-        node_first_seen[node] = now
-    return now - node_first_seen[node]
 
 
 def update_node_last_above_threshold(
@@ -325,8 +330,8 @@ def _process_pool(
     strategy,
     cpu_threshold,
     memory_threshold,
-    node_grace_period,
-    node_first_seen,
+    new_node_grace_period,
+    recently_freed_grace_period,
     node_last_above_threshold,
 ):
     """Compute and apply the placeholder deployment replica count for one pool."""
@@ -342,7 +347,7 @@ def _process_pool(
         placeholder_pod_running = placeholder_pod_running_on_node(
             node, namespace, label_selector
         )
-        unschedulable_node = is_unschedulable_node(node)
+        node_status = get_node_status(node)
 
         if placeholder_pod_running:
             # Node hosts the placeholder — mark it above threshold so
@@ -352,12 +357,12 @@ def _process_pool(
             log.info(
                 f"Placeholder pod is running on {node}. Skipping resource check for this node."
             )
-        elif unschedulable_node:
+        elif node_status.unschedulable:
             log.info(
                 f"Node {node} is unschedulable. Skipping resource check for this node."
             )
         else:
-            node_age_seconds = update_node_first_seen(node, node_first_seen, now)
+            node_age_seconds = node_status.age_seconds
             cpu_free_ratio = resources["cpu_free_ratio"]
             mem_free_ratio = resources["mem_free_ratio"]
             is_free = (
@@ -373,19 +378,20 @@ def _process_pool(
             )
             if not is_free:
                 update_node_last_above_threshold(node, node_last_above_threshold, now)
-            elif node_age_seconds < node_grace_period:
+            elif node_age_seconds < new_node_grace_period:
                 log.info(
-                    f"Node {node} has been observed for {node_age_seconds:.0f}s, "
-                    f"within {node_grace_period}s grace period. Skipping reduction."
+                    f"Node {node} is {node_age_seconds:.0f}s old, within "
+                    f"{new_node_grace_period}s new-node grace period. Skipping reduction."
                 )
             elif (
                 node in node_last_above_threshold
-                and (now - node_last_above_threshold[node]) < node_grace_period
+                and (now - node_last_above_threshold[node])
+                < recently_freed_grace_period
             ):
                 time_since_freed = now - node_last_above_threshold[node]
                 log.info(
-                    f"Node {node} was above threshold {time_since_freed:.0f}s ago, "
-                    f"within {node_grace_period}s recently-freed grace period. Skipping reduction."
+                    f"Node {node} was above threshold {time_since_freed:.0f}s ago, within "
+                    f"{recently_freed_grace_period}s recently-freed grace period. Skipping reduction."
                 )
             else:
                 log.info(
@@ -468,17 +474,30 @@ def main():
     argparser.add_argument("--cpu-threshold", type=float, default=0.2)
     argparser.add_argument("--memory-threshold", type=float, default=0.2)
     argparser.add_argument(
-        "--strategy", choices=["cpu", "mem", "balanced"], default="balanced"
+        "--strategy",
+        choices=["cpu", "mem", "balanced"],
+        default="balanced",
+        help=(
+            "The resource tracked to trigger a scaling event: cpu, memory, or both (balanced)"
+        ),
     )
     argparser.add_argument(
-        "--node-grace-period",
+        "--new-node-grace-period",
         type=int,
         default=600,
         help=(
-            "Seconds a node is protected from placeholder reduction: "
-            "(1) after the scaler first observes it (new-node grace period) and "
-            "(2) after it drops below the utilization threshold or loses its "
-            "placeholder pod (recently-freed grace period)."
+            "Seconds a newly created node is protected from placeholder "
+            "reduction to cover node prepull time and not consider it idle."
+        ),
+    )
+    argparser.add_argument(
+        "--recently-freed-grace-period",
+        type=int,
+        default=600,
+        help=(
+            "Seconds a node is protected from placeholder reduction after "
+            "it drops below the utilization threshold or loses its "
+            "placeholder pod, to avoid oscillation right after eviction."
         ),
     )
 
@@ -490,11 +509,9 @@ def main():
     cpu_threshold = args.cpu_threshold
     memory_threshold = args.memory_threshold
     strategy = args.strategy
-    node_grace_period = args.node_grace_period
+    new_node_grace_period = args.new_node_grace_period
+    recently_freed_grace_period = args.recently_freed_grace_period
 
-    # Maps node name -> perf_counter value when the scaler first observed it.
-    # Used to enforce the new-node grace period across loop iterations.
-    node_first_seen: dict[str, float] = {}
     # Maps node name -> perf_counter value when the node was last seen above
     # the utilization threshold (or hosting a placeholder pod).  Used to
     # enforce the recently-freed grace period.
@@ -549,8 +566,8 @@ def main():
                 strategy=strategy,
                 cpu_threshold=cpu_threshold,
                 memory_threshold=memory_threshold,
-                node_grace_period=node_grace_period,
-                node_first_seen=node_first_seen,
+                new_node_grace_period=new_node_grace_period,
+                recently_freed_grace_period=recently_freed_grace_period,
                 node_last_above_threshold=node_last_above_threshold,
             )
 
@@ -559,9 +576,6 @@ def main():
             node
             for pool_nodes in usable_resources_result.values()
             for node in pool_nodes
-        }
-        node_first_seen = {
-            n: t for n, t in node_first_seen.items() if n in all_seen_nodes
         }
         node_last_above_threshold = {
             n: t for n, t in node_last_above_threshold.items() if n in all_seen_nodes
