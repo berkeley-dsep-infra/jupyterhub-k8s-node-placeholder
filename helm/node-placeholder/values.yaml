@@ -55,7 +55,8 @@ cpuThreshold: 0.2
 memoryThreshold: 0.2
 scalingStrategy: balanced # Options: cpu, mem, balanced (default)
 calendarOverrideEnabled: false # Set to True to force the scaler to use calendar replica counts instead of config replica counts when calendar replica counts are greater than 0
-nodeGracePeriod: 600 # seconds a node is protected from placeholder reduction
+newNodeGracePeriod: 600 # seconds a newly created node is protected from placeholder reduction
+recentlyFreedGracePeriod: 600 # seconds a node is protected from placeholder reduction after dropping below the utilization threshold or losing its placeholder pod
 
 # The URL of the public calendar to use for the node placeholder.
 # calendarUrl:
