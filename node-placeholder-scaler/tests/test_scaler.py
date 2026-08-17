@@ -5,25 +5,31 @@ Run from node-placeholder-scaler/:
     pytest tests/test_scaler.py
 """
 
+import time
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
+from ruamel.yaml import YAML
 from scaler.scaler import (
+    NodeStatus,
+    _process_pool,
     any_placeholder_pod_pending,
     compute_replica_count,
     get_allocatable_resources_by_pool,
     get_node_pool_mapping,
+    get_node_status,
     get_replica_counts,
     get_requested_resources_by_pool,
     get_usable_resources,
-    is_unschedulable_node,
     make_deployment,
     placeholder_pod_running_on_node,
-    update_node_first_seen,
     update_node_last_above_threshold,
 )
+
+yaml = YAML(typ="safe")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -723,30 +729,35 @@ class TestPlaceholderPodRunningOnNode:
 
 
 # ---------------------------------------------------------------------------
-# is_unschedulable_node
+# get_node_status
 # ---------------------------------------------------------------------------
 
 
-class TestIsUnschedulableNode:
+def _node_with_age(unschedulable, age_seconds):
+    node = MagicMock()
+    node.spec.unschedulable = unschedulable
+    node.metadata.creation_timestamp = datetime.now(timezone.utc) - timedelta(
+        seconds=age_seconds
+    )
+    return node
+
+
+class TestGetNodeStatus:
     @patch("scaler.scaler.config.load_kube_config")
     @patch("scaler.scaler.config.load_incluster_config")
     @patch("scaler.scaler.client.CoreV1Api")
     def test_unschedulable_true(self, mock_api_cls, mock_incluster, mock_kube):
         mock_incluster.side_effect = ConfigException()
-        node = MagicMock()
-        node.spec.unschedulable = True
-        mock_api_cls.return_value.read_node.return_value = node
-        assert is_unschedulable_node("node-1") is True
+        mock_api_cls.return_value.read_node.return_value = _node_with_age(True, 0)
+        assert get_node_status("node-1").unschedulable is True
 
     @patch("scaler.scaler.config.load_kube_config")
     @patch("scaler.scaler.config.load_incluster_config")
     @patch("scaler.scaler.client.CoreV1Api")
     def test_unschedulable_false(self, mock_api_cls, mock_incluster, mock_kube):
         mock_incluster.side_effect = ConfigException()
-        node = MagicMock()
-        node.spec.unschedulable = False
-        mock_api_cls.return_value.read_node.return_value = node
-        assert is_unschedulable_node("node-1") is False
+        mock_api_cls.return_value.read_node.return_value = _node_with_age(False, 0)
+        assert get_node_status("node-1").unschedulable is False
 
     @patch("scaler.scaler.config.load_kube_config")
     @patch("scaler.scaler.config.load_incluster_config")
@@ -756,31 +767,54 @@ class TestIsUnschedulableNode:
     ):
         """None (field absent) is falsy: cordon sets it to True, not-cordoned is None."""
         mock_incluster.side_effect = ConfigException()
-        node = MagicMock()
-        node.spec.unschedulable = None
-        mock_api_cls.return_value.read_node.return_value = node
-        assert is_unschedulable_node("node-1") is False
+        mock_api_cls.return_value.read_node.return_value = _node_with_age(None, 0)
+        assert get_node_status("node-1").unschedulable is False
 
     @patch("scaler.scaler.config.load_kube_config")
     @patch("scaler.scaler.config.load_incluster_config")
     @patch("scaler.scaler.client.CoreV1Api")
-    def test_api_error_returns_false(self, mock_api_cls, mock_incluster, mock_kube):
+    def test_api_error_fails_safe(self, mock_api_cls, mock_incluster, mock_kube):
+        """On API error, report schedulable and brand new -- blocks reduction, doesn't allow it."""
         mock_incluster.side_effect = ConfigException()
         mock_api_cls.return_value.read_node.side_effect = ApiException()
-        assert is_unschedulable_node("node-1") is False
+        status = get_node_status("node-1")
+        assert status.unschedulable is False
+        assert status.age_seconds == 0.0
 
     @patch("scaler.scaler.config.load_kube_config")
     @patch("scaler.scaler.config.load_incluster_config")
     @patch("scaler.scaler.client.CoreV1Api")
     def test_node_name_passed_to_api(self, mock_api_cls, mock_incluster, mock_kube):
         mock_incluster.side_effect = ConfigException()
-        node = MagicMock()
-        node.spec.unschedulable = False
-        mock_api_cls.return_value.read_node.return_value = node
-        is_unschedulable_node("my-special-node")
+        mock_api_cls.return_value.read_node.return_value = _node_with_age(False, 0)
+        get_node_status("my-special-node")
         mock_api_cls.return_value.read_node.assert_called_once_with(
             name="my-special-node"
         )
+
+    @patch("scaler.scaler.config.load_kube_config")
+    @patch("scaler.scaler.config.load_incluster_config")
+    @patch("scaler.scaler.client.CoreV1Api")
+    def test_age_reflects_creation_timestamp(
+        self, mock_api_cls, mock_incluster, mock_kube
+    ):
+        """Age comes from the node's real creation time, not first evaluation."""
+        mock_incluster.side_effect = ConfigException()
+        mock_api_cls.return_value.read_node.return_value = _node_with_age(False, 1200)
+        age = get_node_status("node-1").age_seconds
+        # Allow slack for wall-clock time spent running the test itself.
+        assert 1199 <= age <= 1205
+
+    @patch("scaler.scaler.config.load_kube_config")
+    @patch("scaler.scaler.config.load_incluster_config")
+    @patch("scaler.scaler.client.CoreV1Api")
+    def test_brand_new_node_age_near_zero(
+        self, mock_api_cls, mock_incluster, mock_kube
+    ):
+        mock_incluster.side_effect = ConfigException()
+        mock_api_cls.return_value.read_node.return_value = _node_with_age(False, 0)
+        age = get_node_status("node-1").age_seconds
+        assert 0 <= age <= 2
 
 
 # ---------------------------------------------------------------------------
@@ -937,62 +971,193 @@ class TestComputeReplicaCount:
         assert compute_replica_count(-1, 1, None, False) == 0
 
 
-class TestUpdateNodeFirstSeen:
-    def test_new_node_age_is_zero(self):
-        """A node seen for the first time has an observed age of 0."""
-        node_first_seen = {}
-        age = update_node_first_seen("node-a", node_first_seen, now=1000.0)
-        assert age == 0.0
+# ---------------------------------------------------------------------------
+# _process_pool
+# ---------------------------------------------------------------------------
 
-    def test_new_node_recorded_in_dict(self):
-        node_first_seen = {}
-        update_node_first_seen("node-a", node_first_seen, now=1000.0)
-        assert "node-a" in node_first_seen
-        assert node_first_seen["node-a"] == 1000.0
 
-    def test_existing_node_age_reflects_elapsed_time(self):
-        """A node first seen 400s ago reports age 400s."""
-        node_first_seen = {"node-a": 600.0}
-        age = update_node_first_seen("node-a", node_first_seen, now=1000.0)
-        assert age == 400.0
+def _pool_config(replicas=1):
+    return {
+        "replicas": replicas,
+        "nodeSelector": {"hub.jupyter.org/pool-name": "pool-a"},
+        "resources": {"requests": {"memory": "1Mi"}},
+    }
 
-    def test_existing_node_first_seen_time_unchanged(self):
-        """Calling again with a later 'now' does not overwrite the first-seen time."""
-        node_first_seen = {"node-a": 600.0}
-        update_node_first_seen("node-a", node_first_seen, now=1000.0)
-        assert node_first_seen["node-a"] == 600.0
 
-    def test_age_within_grace_period(self):
-        """A node seen 100s ago is within a 600s grace period."""
-        now = 1000.0
-        # stored value is the clock reading when first seen, so 100s of age
-        # means first_seen = now - 100.
-        node_first_seen = {"node-a": now - 100}
-        age = update_node_first_seen("node-a", node_first_seen, now=now)
-        assert age < 600
+def _process_pool_kwargs(**overrides):
+    kwargs = dict(
+        pool_name="pool-a",
+        pool_config=_pool_config(),
+        pool_usable_resources={},
+        replica_count_overrides={},
+        calendar_override_enabled=False,
+        placeholder_template={"spec": {"template": {"spec": {"containers": [{}]}}}},
+        namespace="node-placeholder",
+        label_selector="app=node-placeholder-scaler,component=placeholder",
+        strategy="mem",
+        cpu_threshold=0.2,
+        memory_threshold=0.4,
+        new_node_grace_period=600,
+        recently_freed_grace_period=600,
+        node_last_above_threshold={},
+    )
+    kwargs.update(overrides)
+    return kwargs
 
-    def test_age_exceeds_grace_period(self):
-        """A node seen 700s ago exceeds a 600s grace period."""
-        now = 1000.0
-        # first_seen = now - 700 => age of 700s, past the 600s threshold.
-        node_first_seen = {"node-a": now - 700}
-        age = update_node_first_seen("node-a", node_first_seen, now=now)
-        assert age >= 600
 
-    def test_multiple_nodes_tracked_independently(self):
-        """Each node has its own first-seen timestamp."""
-        node_first_seen = {"node-a": 500.0, "node-b": 800.0}
-        age_a = update_node_first_seen("node-a", node_first_seen, now=1000.0)
-        age_b = update_node_first_seen("node-b", node_first_seen, now=1000.0)
-        assert age_a == 500.0
-        assert age_b == 200.0
+def _free_node_status(age_seconds=1000):
+    return NodeStatus(unschedulable=False, age_seconds=age_seconds)
 
-    def test_new_node_does_not_affect_existing_entries(self):
-        """Adding a new node leaves existing entries untouched."""
-        node_first_seen = {"node-a": 500.0}
-        update_node_first_seen("node-b", node_first_seen, now=1000.0)
-        assert node_first_seen["node-a"] == 500.0
-        assert node_first_seen["node-b"] == 1000.0
+
+class TestProcessPool:
+    @patch("scaler.scaler.subprocess.run")
+    @patch("scaler.scaler.make_deployment")
+    @patch("scaler.scaler.any_placeholder_pod_pending")
+    @patch("scaler.scaler.get_node_status")
+    @patch("scaler.scaler.placeholder_pod_running_on_node")
+    def test_placeholder_node_skips_resource_check_and_is_stamped(
+        self, mock_running, mock_status, mock_pending, mock_make_deployment, mock_run
+    ):
+        mock_running.return_value = True
+        mock_status.return_value = _free_node_status()
+        mock_pending.return_value = False
+        mock_make_deployment.return_value = {}
+        node_last_above_threshold = {}
+        kwargs = _process_pool_kwargs(
+            pool_usable_resources={
+                "node-a": {"cpu_free_ratio": 0.9, "mem_free_ratio": 0.9}
+            },
+            node_last_above_threshold=node_last_above_threshold,
+        )
+        _process_pool(**kwargs)
+        assert "node-a" in node_last_above_threshold
+
+    @patch("scaler.scaler.subprocess.run")
+    @patch("scaler.scaler.make_deployment")
+    @patch("scaler.scaler.any_placeholder_pod_pending")
+    @patch("scaler.scaler.get_node_status")
+    @patch("scaler.scaler.placeholder_pod_running_on_node")
+    def test_unschedulable_node_skips_resource_check(
+        self, mock_running, mock_status, mock_pending, mock_make_deployment, mock_run
+    ):
+        mock_running.return_value = False
+        mock_status.return_value = NodeStatus(unschedulable=True, age_seconds=1000)
+        mock_pending.return_value = False
+        mock_make_deployment.return_value = {}
+        node_last_above_threshold = {}
+        kwargs = _process_pool_kwargs(
+            pool_config=_pool_config(replicas=1),
+            pool_usable_resources={
+                "node-a": {"cpu_free_ratio": 0.9, "mem_free_ratio": 0.9}
+            },
+            node_last_above_threshold=node_last_above_threshold,
+        )
+        _process_pool(**kwargs)
+        # Neither branch that would reduce or stamp the node ran.
+        assert "node-a" not in node_last_above_threshold
+
+    @patch("scaler.scaler.subprocess.run")
+    @patch("scaler.scaler.make_deployment")
+    @patch("scaler.scaler.any_placeholder_pod_pending")
+    @patch("scaler.scaler.get_node_status")
+    @patch("scaler.scaler.placeholder_pod_running_on_node")
+    def test_young_free_node_not_reduced(
+        self, mock_running, mock_status, mock_pending, mock_make_deployment, mock_run
+    ):
+        """A free node younger than the new-node grace period isn't counted."""
+        mock_running.return_value = False
+        mock_status.return_value = _free_node_status(age_seconds=100)
+        mock_pending.return_value = False
+        mock_make_deployment.return_value = {}
+        node_last_above_threshold = {}
+        kwargs = _process_pool_kwargs(
+            pool_config=_pool_config(replicas=1),
+            pool_usable_resources={
+                "node-a": {"cpu_free_ratio": 0.9, "mem_free_ratio": 0.9}
+            },
+            new_node_grace_period=600,
+            node_last_above_threshold=node_last_above_threshold,
+        )
+        _process_pool(**kwargs)
+        assert mock_make_deployment.call_args.args[-1] == 1  # replicas unreduced
+        assert "node-a" not in node_last_above_threshold
+
+    @patch("scaler.scaler.subprocess.run")
+    @patch("scaler.scaler.make_deployment")
+    @patch("scaler.scaler.any_placeholder_pod_pending")
+    @patch("scaler.scaler.get_node_status")
+    @patch("scaler.scaler.placeholder_pod_running_on_node")
+    def test_recently_freed_node_not_reduced(
+        self, mock_running, mock_status, mock_pending, mock_make_deployment, mock_run
+    ):
+        """A free, old-enough node that was above threshold moments ago isn't counted."""
+        mock_running.return_value = False
+        mock_status.return_value = _free_node_status(age_seconds=1000)
+        mock_pending.return_value = False
+        mock_make_deployment.return_value = {}
+        now = time.perf_counter()
+        node_last_above_threshold = {"node-a": now}
+        kwargs = _process_pool_kwargs(
+            pool_config=_pool_config(replicas=1),
+            pool_usable_resources={
+                "node-a": {"cpu_free_ratio": 0.9, "mem_free_ratio": 0.9}
+            },
+            new_node_grace_period=600,
+            recently_freed_grace_period=600,
+            node_last_above_threshold=node_last_above_threshold,
+        )
+        _process_pool(**kwargs)
+        assert mock_make_deployment.call_args.args[-1] == 1  # replicas unreduced
+        # Still flagged as recently freed -- untouched by the reduction branch.
+        assert node_last_above_threshold["node-a"] == now
+
+    @patch("scaler.scaler.subprocess.run")
+    @patch("scaler.scaler.make_deployment")
+    @patch("scaler.scaler.any_placeholder_pod_pending")
+    @patch("scaler.scaler.get_node_status")
+    @patch("scaler.scaler.placeholder_pod_running_on_node")
+    def test_free_node_past_both_grace_periods_is_reduced(
+        self, mock_running, mock_status, mock_pending, mock_make_deployment, mock_run
+    ):
+        mock_running.return_value = False
+        mock_status.return_value = _free_node_status(age_seconds=1000)
+        mock_pending.return_value = False
+        mock_make_deployment.return_value = {}
+        kwargs = _process_pool_kwargs(
+            pool_config=_pool_config(replicas=1),
+            pool_usable_resources={
+                "node-a": {"cpu_free_ratio": 0.9, "mem_free_ratio": 0.9}
+            },
+            new_node_grace_period=600,
+            recently_freed_grace_period=600,
+            node_last_above_threshold={},
+        )
+        _process_pool(**kwargs)
+        assert mock_make_deployment.call_args.args[-1] == 0  # reduced to 0
+
+    @patch("scaler.scaler.subprocess.run")
+    @patch("scaler.scaler.make_deployment")
+    @patch("scaler.scaler.any_placeholder_pod_pending")
+    @patch("scaler.scaler.get_node_status")
+    @patch("scaler.scaler.placeholder_pod_running_on_node")
+    def test_not_free_node_is_stamped_and_not_reduced(
+        self, mock_running, mock_status, mock_pending, mock_make_deployment, mock_run
+    ):
+        mock_running.return_value = False
+        mock_status.return_value = _free_node_status(age_seconds=1000)
+        mock_pending.return_value = False
+        mock_make_deployment.return_value = {}
+        node_last_above_threshold = {}
+        kwargs = _process_pool_kwargs(
+            pool_config=_pool_config(replicas=1),
+            pool_usable_resources={
+                "node-a": {"cpu_free_ratio": 0.1, "mem_free_ratio": 0.1}
+            },
+            node_last_above_threshold=node_last_above_threshold,
+        )
+        _process_pool(**kwargs)
+        assert "node-a" in node_last_above_threshold
+        assert mock_make_deployment.call_args.args[-1] == 1  # not reduced
 
 
 class TestUpdateNodeLastAboveThreshold:
