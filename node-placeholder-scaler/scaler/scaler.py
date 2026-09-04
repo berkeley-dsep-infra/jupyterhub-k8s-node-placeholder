@@ -404,7 +404,9 @@ def _process_pool(
     override_replica_count = replica_count_overrides.get(
         pool_name, pool_config["replicas"]
     )
-    modified_replica = override_replica_count - node_placeholder_deployment_reduction
+    modified_replica = max(
+        override_replica_count - node_placeholder_deployment_reduction, 0
+    )
     has_pending_placeholder = any_placeholder_pod_pending(
         namespace, label_selector, pool_config["nodeSelector"]
     )
