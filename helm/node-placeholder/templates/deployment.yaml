@@ -44,7 +44,8 @@ spec:
             - --cpu-threshold={{ .Values.cpuThreshold }}
             - --memory-threshold={{ .Values.memoryThreshold }}
             - --strategy={{ .Values.scalingStrategy | default "balanced" }}
-            - --node-grace-period={{ .Values.nodeGracePeriod | default "600" }}
+            - --new-node-grace-period={{ .Values.newNodeGracePeriod | default "600" }}
+            - --recently-freed-grace-period={{ .Values.recentlyFreedGracePeriod | default "600" }}
           env:
             - name: TZ
               value: {{ .Values.calendarTimezone | default "UTC" }}
