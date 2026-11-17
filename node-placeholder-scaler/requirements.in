@@ -1,8 +1,8 @@
-certifi==2024.07.04
+certifi==2026.10.18
 DateTime
 ical==5.0.0
 kubernetes==35.0.0
 niquests==3.7.2
-pyasn1==0.6.4
+pyasn1==0.6.5
 ruamel.yaml
 urllib3==2.8.0
